@@ -4,10 +4,17 @@ import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, ShieldCheck, User, Check, 
-  AlertTriangle, CheckCircle2, Camera
+  AlertTriangle, CheckCircle2, Camera, Info
 } from 'lucide-react';
 
-const POSITIONS = ['President', 'Vice President', 'Secretary', 'Finance Executive', 'Auditor', 'PRO', '2nd Year Representative', '3rd Year Representative', '4th Year Representative'];
+const EXECUTIVE_POSITIONS = [
+  'President', 
+  'Vice President', 
+  'Secretary', 
+  'Finance Executive', 
+  'Auditor', 
+  'PRO'
+];
 
 const VotingBooth = () => {
   const navigate = useNavigate();
@@ -17,7 +24,8 @@ const VotingBooth = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any>(null);
-  
+  const [myBallotPositions, setMyBallotPositions] = useState<string[]>([]);
+
   // UI States
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [toast, setToast] = useState<{msg: string, type: 'error' | 'success'} | null>(null);
@@ -27,7 +35,6 @@ const VotingBooth = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return navigate('/');
 
-      // 1. Check if user already voted
       const { data: existingVote } = await supabase
         .from('votes')
         .select('id')
@@ -39,14 +46,32 @@ const VotingBooth = () => {
         return;
       }
 
-      // 2. Fetch Profile & Settings
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       setUserProfile(profile);
+
+      // --- REPRESENTATIVE SHIFT LOGIC ---
+      const userYear = profile?.year_level; 
+      let repPosition = "";
+
+      if (userYear === '1') {
+        repPosition = '2nd Year Representative';
+      } else if (userYear === '2') {
+        repPosition = '3rd Year Representative';
+      } else if (userYear === '3') {
+        repPosition = '4th Year Representative';
+      } else if (userYear === '4') {
+        repPosition = ""; // No representative for 4th year voters
+      }
+
+      const finalPositions = repPosition 
+        ? [...EXECUTIVE_POSITIONS, repPosition] 
+        : [...EXECUTIVE_POSITIONS];
+
+      setMyBallotPositions(finalPositions);
 
       const { data: settings } = await supabase.from('system_settings').select('is_election_live').eq('id', 'global_config').single();
       if (!settings?.is_election_live) navigate('/dashboard');
 
-      // 3. Fetch Candidates
       const { data: list } = await supabase.from('candidates').select('*').order('created_at', { ascending: true });
       setCandidates(list || []);
       setLoading(false);
@@ -68,7 +93,6 @@ const VotingBooth = () => {
     setSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
       const voteEntries = Object.entries(selections).map(([pos, cand]) => ({
         voter_id: user?.id,
         candidate_id: cand.id,
@@ -89,9 +113,8 @@ const VotingBooth = () => {
         choices: selections,
         ref: Math.random().toString(36).toUpperCase().substring(2, 10)
       });
-
     } catch (err: any) {
-      triggerToast("Submission failed. You may have already voted.", "error");
+      triggerToast("Submission failed.", "error");
     } finally {
       setSubmitting(false);
     }
@@ -104,11 +127,10 @@ const VotingBooth = () => {
     </div>
   );
 
-  const missingVotes = POSITIONS.filter(pos => !selections[pos]);
+  const missingVotes = myBallotPositions.filter(pos => !selections[pos]);
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-200 font-sans selection:bg-blue-500/30 relative flex flex-col">
-      
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -50, opacity: 0 }}
@@ -122,7 +144,7 @@ const VotingBooth = () => {
         )}
       </AnimatePresence>
 
-      <nav className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md">
+      <nav className="sticky top-0 z-40 border-b border-white/5 bg-slate-950/80 backdrop-blur-md">
         <div className="container mx-auto px-6 py-4 flex justify-between items-center">
           <button onClick={() => navigate('/dashboard')} className="text-slate-400 hover:text-white transition-all uppercase font-black text-[9px] tracking-widest flex items-center gap-2">
             <ArrowLeft size={14} /> Cancel
@@ -131,53 +153,66 @@ const VotingBooth = () => {
         </div>
       </nav>
 
-      <main className="container mx-auto px-4 md:px-6 py-12 flex-grow max-w-4xl">
+      <main className="container mx-auto px-4 md:px-6 py-12 pb-40 flex-grow max-w-4xl">
         <header className="text-center mb-16">
           <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2 text-white">Ballot</h2>
           <p className="text-blue-500 uppercase font-black text-[9px] tracking-[0.6em]">Session ID: {userProfile?.id?.substring(0,8)}</p>
         </header>
 
         <div className="space-y-20">
-          {POSITIONS.map((pos) => (
-            <section key={pos} className="space-y-8">
-              <div className="flex items-center gap-4">
-                <div className="bg-slate-900 text-slate-400 px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-800">{pos}</div>
-                <div className="h-px flex-1 bg-slate-800/50"></div>
-              </div>
+          {myBallotPositions.map((pos) => (
+            <div key={pos}>
+               {pos.includes('Representative') && (
+                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 bg-blue-600/5 border border-blue-500/20 p-5 rounded-3xl flex items-start gap-4">
+                    <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-slate-400 leading-relaxed font-medium uppercase tracking-tight">
+                      Note: You are voting for the <span className="text-white font-black italic">{pos}</span> candidates who will serve during the next academic term.
+                    </p>
+                 </motion.div>
+               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {candidates.filter(c => c.position === pos).map((cand) => (
-                  <label key={cand.id} className={`cursor-pointer flex items-center gap-5 p-5 rounded-[32px] border-2 transition-all duration-300 ${
-                      selections[pos]?.id === cand.id ? 'bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/5' : 'bg-slate-900/40 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <input type="radio" name={pos} className="hidden" onChange={() => handleSelect(pos, cand)} />
-                    <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative">
-                      {cand.image_url ? (
-                        <img src={cand.image_url} alt={`${cand.name} profile`} title={cand.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <User className="w-full h-full p-5 text-slate-700" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-black text-base uppercase tracking-tight truncate text-white">{cand.name}</h4>
-                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{cand.party_name}</p>
-                    </div>
-                    <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
-                        selections[pos]?.id === cand.id ? 'bg-blue-500 border-blue-400' : 'border-slate-800'
-                    }`}>
-                      {selections[pos]?.id === cand.id && <Check size={16} className="text-white" strokeWidth={3} />}
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </section>
+              <section className="space-y-8">
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-900 text-slate-400 px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-800">{pos}</div>
+                  <div className="h-px flex-1 bg-slate-800/50"></div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {candidates.filter(c => c.position === pos).map((cand) => (
+                    <label key={cand.id} className={`cursor-pointer flex items-center gap-4 md:gap-5 p-4 md:p-5 rounded-[32px] border-2 transition-all duration-300 ${
+                        selections[pos]?.id === cand.id ? 'bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/5' : 'bg-slate-900/40 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <input type="radio" name={pos} className="hidden" onChange={() => handleSelect(pos, cand)} />
+                      <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative">
+                        {cand.image_url ? (
+                          <img src={cand.image_url} alt={cand.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <User className="w-full h-full p-5 text-slate-700" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-black text-sm md:text-base uppercase tracking-tight truncate text-white">{cand.name}</h4>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{cand.party_name} </p>
+                      </div>
+                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                          selections[pos]?.id === cand.id ? 'bg-blue-500 border-blue-400' : 'border-slate-800'
+                      }`}>
+                        {selections[pos]?.id === cand.id && <Check size={16} className="text-white" strokeWidth={3} />}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            </div>
           ))}
         </div>
 
-        <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-xl border-t border-slate-800 p-6 z-40">
+        <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-xl border-t border-white/5 p-6 z-40">
           <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Progress: {Object.keys(selections).length}/{POSITIONS.length}</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+              Ballot Completion: {Object.keys(selections).length} / {myBallotPositions.length}
+            </p>
             <button 
               onClick={() => setShowConfirmModal(true)}
               className="w-full md:w-auto px-12 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.4em] transition-all shadow-xl active:scale-95"
@@ -188,6 +223,7 @@ const VotingBooth = () => {
         </div>
       </main>
 
+      {/* RECEIPT MODAL */}
       <AnimatePresence>
         {receipt && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
@@ -197,32 +233,32 @@ const VotingBooth = () => {
               
               <div className="text-center mb-6 pt-2">
                 <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <ShieldCheck size={24} />
+                  <CheckCircle2 size={24} />
                 </div>
                 <h3 className="text-xl font-black uppercase tracking-tight">Ballot Sealed</h3>
-                <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest mt-1">ID: {receipt.ref}</p>
+                <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest mt-1">Ref: {receipt.ref}</p>
               </div>
 
-              <div className="mb-6 flex items-center gap-3 p-3 bg-blue-50 rounded-2xl border border-blue-100">
-                <Camera size={16} className="text-blue-600 shrink-0" />
-                <p className="text-[9px] font-black text-blue-700 uppercase leading-tight">
-                  Action Required: Please screenshot this receipt for your personal records.
+              {/* SCREENSHOT NOTICE */}
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center gap-3">
+                <div className="bg-blue-600 p-2 rounded-lg text-white">
+                  <Camera size={16} className="animate-pulse" />
+                </div>
+                <p className="text-[10px] font-black text-blue-800 uppercase leading-tight tracking-tight">
+                  Action Required: Please screenshot this receipt for your records before closing.
                 </p>
               </div>
 
-              <div className="bg-slate-50 rounded-3xl p-6 mb-6 border border-slate-100 font-mono text-[9px]">
+              <div className="bg-slate-50 rounded-3xl p-6 mb-6 border border-slate-100 font-mono text-[9px] max-h-64 overflow-y-auto custom-scrollbar">
                 <div className="space-y-3">
-                  {POSITIONS.map(pos => (
-                    <div key={pos} className="grid grid-cols-2 gap-2">
+                  {myBallotPositions.map(pos => (
+                    <div key={pos} className="grid grid-cols-2 gap-2 border-b border-slate-100 pb-2 last:border-0">
                       <span className="text-slate-400 font-bold uppercase truncate">{pos}</span>
                       <span className={`font-black text-right uppercase truncate ${receipt.choices[pos] ? 'text-slate-900' : 'text-slate-300'}`}>
-                        {receipt.choices[pos]?.name || '---'}
+                        {receipt.choices[pos]?.name || 'ABSTAINED'}
                       </span>
                     </div>
                   ))}
-                </div>
-                <div className="mt-6 pt-4 border-t border-dashed border-slate-200 text-[8px] text-slate-400 text-center uppercase">
-                  Processed: {receipt.timestamp}
                 </div>
               </div>
 
@@ -234,22 +270,25 @@ const VotingBooth = () => {
         )}
       </AnimatePresence>
 
+      {/* CONFIRMATION MODAL */}
       <AnimatePresence>
         {showConfirmModal && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" />
-            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="relative w-full max-w-sm bg-white text-slate-900 rounded-[40px] p-10 shadow-2xl">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-sm bg-white text-slate-900 rounded-[40px] p-10 shadow-2xl">
               <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><AlertTriangle size={28} /></div>
               <h3 className="text-xl font-black uppercase text-center mb-4">Confirm Ballot?</h3>
               {missingVotes.length > 0 && (
-                <div className="bg-slate-50 p-4 rounded-2xl mb-6 border border-slate-100">
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Abstained:</p>
-                  <p className="text-[9px] font-bold text-slate-600 uppercase">{missingVotes.join(',  ')}</p>
+                <div className="bg-slate-50 p-4 rounded-2xl mb-6 border border-slate-100 max-h-32 overflow-y-auto text-center">
+                  <p className="text-[8px] font-black text-red-500 uppercase tracking-widest mb-1">No selection for:</p>
+                  <p className="text-[9px] font-bold text-slate-600 uppercase leading-tight">{missingVotes.join(', ')}</p>
                 </div>
               )}
               <div className="flex flex-col gap-2">
-                <button onClick={processVoteSubmission} disabled={submitting} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.2em]">Authorize</button>
-                <button onClick={() => setShowConfirmModal(false)} className="w-full py-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">Review</button>
+                <button onClick={processVoteSubmission} disabled={submitting} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] disabled:opacity-50">
+                   {submitting ? 'SEALING...' : 'AUTHORIZE'}
+                </button>
+                <button onClick={() => setShowConfirmModal(false)} className="w-full py-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">Review Ballot</button>
               </div>
             </motion.div>
           </div>
