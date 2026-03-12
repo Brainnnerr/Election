@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react'; // Added useRef to imports
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,9 @@ const EXECUTIVE_POSITIONS = [
 
 const VotingBooth = () => {
   const navigate = useNavigate();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
   const [userProfile, setUserProfile] = useState<any>(null);
   const [candidates, setCandidates] = useState<any[]>([]);
   const [selections, setSelections] = useState<Record<string, any>>({});
@@ -25,6 +28,10 @@ const VotingBooth = () => {
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<any>(null);
   const [myBallotPositions, setMyBallotPositions] = useState<string[]>([]);
+
+  const [hasTakenSelfie, setHasTakenSelfie] = useState(false);
+  const [selfieImage, setSelfieImage] = useState<string | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   // UI States
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -60,7 +67,7 @@ const VotingBooth = () => {
       } else if (userYear === '3') {
         repPosition = '4th Year Representative';
       } else if (userYear === '4') {
-        repPosition = ""; // No representative for 4th year voters
+        repPosition = ""; 
       }
 
       const finalPositions = repPosition 
@@ -75,8 +82,12 @@ const VotingBooth = () => {
       const { data: list } = await supabase.from('candidates').select('*').order('created_at', { ascending: true });
       setCandidates(list || []);
       setLoading(false);
+      
+      // Start Camera
+      startCamera();
     };
     fetchData();
+    return () => stopCamera();
   }, [navigate]);
 
   const triggerToast = (msg: string, type: 'error' | 'success') => {
@@ -88,15 +99,45 @@ const VotingBooth = () => {
     setSelections(prev => ({ ...prev, [position]: candidate }));
   };
 
+  // Helper to upload selfie to Supabase Storage
+  const uploadSelfieToStorage = async (userId: string) => {
+    if (!selfieImage) return null;
+    try {
+      // Convert base64 to blob
+      const base64 = selfieImage.split(',')[1];
+      const blob = await fetch(`data:image/png;base64,${base64}`).then(res => res.blob());
+      const fileName = `${userId}/${Date.now()}.png`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('voter-selfies')
+        .upload(fileName, blob);
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from('voter-selfies').getPublicUrl(fileName);
+      return data.publicUrl;
+    } catch (err) {
+      console.error("Storage Error:", err);
+      return null;
+    }
+  };
+
   const processVoteSubmission = async () => {
     setShowConfirmModal(false);
     setSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No User Found");
+
+      // 1. Upload Selfie First
+      const publicSelfieUrl = await uploadSelfieToStorage(user.id);
+
+      // 2. Prepare Vote Entries with Selfie URL
       const voteEntries = Object.entries(selections).map(([pos, cand]) => ({
-        voter_id: user?.id,
+        voter_id: user.id,
         candidate_id: cand.id,
-        position: pos
+        position: pos,
+        voter_selfie: publicSelfieUrl // Storing the link in the DB
       }));
 
       if (voteEntries.length === 0) {
@@ -114,9 +155,42 @@ const VotingBooth = () => {
         ref: Math.random().toString(36).toUpperCase().substring(2, 10)
       });
     } catch (err: any) {
-      triggerToast("Submission failed.", "error");
+      triggerToast("Submission failed. Database error.", "error");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "user" },
+        audio: false 
+      });
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraStream(stream);
+    } catch (err) {
+      console.error("Camera access error:", err);
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+  };
+
+  const takeSelfie = () => {
+    if (videoRef.current && canvasRef.current) {
+      const context = canvasRef.current.getContext('2d');
+      canvasRef.current.width = videoRef.current.videoWidth;
+      canvasRef.current.height = videoRef.current.videoHeight;
+      context?.drawImage(videoRef.current, 0, 0);
+      const imageData = canvasRef.current.toDataURL('image/png');
+      setSelfieImage(imageData);
+      stopCamera();
+      setHasTakenSelfie(true);
     }
   };
 
@@ -153,75 +227,126 @@ const VotingBooth = () => {
         </div>
       </nav>
 
-      <main className="container mx-auto px-4 md:px-6 py-12 pb-40 flex-grow max-w-4xl">
-        <header className="text-center mb-16">
-          <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2 text-white">Ballot</h2>
-          <p className="text-blue-500 uppercase font-black text-[9px] tracking-[0.6em]">Session ID: {userProfile?.id?.substring(0,8)}</p>
-        </header>
+     {!hasTakenSelfie ? (
+  <div className="flex flex-col items-center justify-center p-6 min-h-screen bg-[#020617]">
+    <h2 className="text-white font-black uppercase mb-4 tracking-widest">Voter Verification</h2>
+    <p className="text-slate-500 text-[10px] font-bold uppercase mb-8 tracking-[0.2em]">Face capture required to unlock ballot</p>
+    
+    <div className="relative w-full max-w-sm aspect-square bg-slate-900 rounded-[40px] overflow-hidden border-2 border-blue-500/20 shadow-2xl">
+      <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover scale-x-[-1]" />
+      <canvas ref={canvasRef} className="hidden" />
+      <div className="absolute inset-0 border-[40px] border-[#020617]/40 rounded-full pointer-events-none" />
+      <div className="absolute inset-0 border border-blue-500/10 pointer-events-none" />
+    </div>
 
-        <div className="space-y-20">
-          {myBallotPositions.map((pos) => (
-            <div key={pos}>
-               {pos.includes('Representative') && (
-                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 bg-blue-600/5 border border-blue-500/20 p-5 rounded-3xl flex items-start gap-4">
-                    <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-slate-400 leading-relaxed font-medium uppercase tracking-tight">
-                      Note: You are voting for the <span className="text-white font-black italic">{pos}</span> candidates who will serve during the next academic term.
-                    </p>
-                 </motion.div>
-               )}
+    {/* --- INSTRUCTION NOTE --- */}
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-8 bg-blue-600/5 border border-blue-500/20 p-4 rounded-2xl max-w-sm w-full flex items-center gap-3"
+    >
+      <div className="bg-blue-600 p-2 rounded-lg text-white">
+        <Info size={16} />
+      </div>
+      <p className="text-[10px] font-black text-slate-400 uppercase leading-tight tracking-wide">
+        Ensure your <span className="text-blue-400">face is visible</span>. Please remove any <span className="text-white">caps, sunglasses, or face masks</span> before capturing.
+      </p>
+    </motion.div>
 
-              <section className="space-y-8">
-                <div className="flex items-center gap-4">
-                  <div className="bg-slate-900 text-slate-400 px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-800">{pos}</div>
-                  <div className="h-px flex-1 bg-slate-800/50"></div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {candidates.filter(c => c.position === pos).map((cand) => (
-                    <label key={cand.id} className={`cursor-pointer flex items-center gap-4 md:gap-5 p-4 md:p-5 rounded-[32px] border-2 transition-all duration-300 ${
-                        selections[pos]?.id === cand.id ? 'bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/5' : 'bg-slate-900/40 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <input type="radio" name={pos} className="hidden" onChange={() => handleSelect(pos, cand)} />
-                      <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative">
-                        {cand.image_url ? (
-                          <img src={cand.image_url} alt={cand.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <User className="w-full h-full p-5 text-slate-700" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-black text-sm md:text-base uppercase tracking-tight truncate text-white">{cand.name}</h4>
-                        <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{cand.party_name} </p>
-                      </div>
-                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
-                          selections[pos]?.id === cand.id ? 'bg-blue-500 border-blue-400' : 'border-slate-800'
-                      }`}>
-                        {selections[pos]?.id === cand.id && <Check size={16} className="text-white" strokeWidth={3} />}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </section>
+    <button 
+      onClick={takeSelfie}
+      className="mt-8 px-12 py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-[0.3em] text-xs transition-all shadow-xl active:scale-95 flex items-center gap-3"
+    >
+      <Camera size={18} /> Take Selfie & Vote
+    </button>
+  </div>
+) : (
+ 
+        <main className="container mx-auto px-4 md:px-6 py-12 pb-40 flex-grow max-w-4xl">
+          <header className="text-center mb-16">
+            <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter mb-2 text-white italic">Ballot</h2>
+            <div className="flex items-center justify-center gap-4">
+              <div className="w-10 h-10 rounded-full border border-blue-500/50 overflow-hidden bg-slate-900">
+                <img src={selfieImage!} alt="Voter" className="w-full h-full object-cover" />
+              </div>
+              <p className="text-blue-500 uppercase font-black text-[9px] tracking-[0.6em]">Session ID: {userProfile?.id?.substring(0,8)}</p>
             </div>
-          ))}
-        </div>
+          </header>
 
-        <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-xl border-t border-white/5 p-6 z-40">
-          <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-              Ballot Completion: {Object.keys(selections).length} / {myBallotPositions.length}
-            </p>
-            <button 
-              onClick={() => setShowConfirmModal(true)}
-              className="w-full md:w-auto px-12 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.4em] transition-all shadow-xl active:scale-95"
-            >
-              Cast Official Ballot
-            </button>
+          <div className="space-y-20">
+            {myBallotPositions.map((pos) => (
+              <div key={pos}>
+                 {pos.includes('Representative') && (
+                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 bg-blue-600/5 border border-blue-500/20 p-5 rounded-3xl flex items-start gap-4">
+                      <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-slate-400 leading-relaxed font-medium uppercase tracking-tight">
+                        Note: You are voting for the <span className="text-white font-black italic">{pos}</span> candidates who will serve during the next academic term.
+                      </p>
+                   </motion.div>
+                 )}
+
+                <section className="space-y-8">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-slate-900 text-slate-400 px-4 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-widest border border-slate-800">{pos}</div>
+                    <div className="h-px flex-1 bg-slate-800/50"></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {candidates.filter(c => c.position === pos).map((cand) => (
+                      <label key={cand.id} className={`cursor-pointer flex items-center gap-4 md:gap-5 p-4 md:p-5 rounded-[32px] border-2 transition-all duration-300 ${
+                          selections[pos]?.id === cand.id ? 'bg-blue-600/10 border-blue-500 shadow-lg shadow-blue-500/5' : 'bg-slate-900/40 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <input type="radio" name={pos} className="hidden" onChange={() => handleSelect(pos, cand)} />
+                        <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative">
+                          {cand.image_url ? (
+                            <img src={cand.image_url} alt={cand.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <User className="w-full h-full p-5 text-slate-700" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-black text-sm md:text-base uppercase tracking-tight truncate text-white">{cand.name}</h4>
+                          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">{cand.party_name} </p>
+                        </div>
+                        <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                            selections[pos]?.id === cand.id ? 'bg-blue-500 border-blue-400' : 'border-slate-800'
+                        }`}>
+                          {selections[pos]?.id === cand.id && <Check size={16} className="text-white" strokeWidth={3} />}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            ))}
           </div>
-        </div>
-      </main>
+
+          
+          <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-xl border-t border-white/5 p-6 z-40">
+  <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+      Ballot Completion: {Object.keys(selections).length} / {myBallotPositions.length}
+    </p>
+    
+    <button 
+      onClick={() => setShowConfirmModal(true)}
+      disabled={submitting}
+      className="w-full md:w-auto px-12 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.4em] transition-all shadow-xl active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+    >
+      {submitting ? (
+        <>
+          <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+          <span>Sealing Ballot...</span>
+        </>
+      ) : (
+        "Cast Official Ballot"
+      )}
+    </button>
+  </div>
+</div>
+        </main>
+      )}
 
       {/* RECEIPT MODAL */}
       <AnimatePresence>
@@ -230,26 +355,27 @@ const VotingBooth = () => {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-slate-950/98 backdrop-blur-xl" />
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="relative w-full max-w-[360px] bg-white text-slate-900 rounded-[40px] p-8 shadow-2xl overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1.5 bg-blue-600"></div>
-              
               <div className="text-center mb-6 pt-2">
                 <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3">
                   <CheckCircle2 size={24} />
                 </div>
                 <h3 className="text-xl font-black uppercase tracking-tight">Ballot Sealed</h3>
-                <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest mt-1">Ref: {receipt.ref}</p>
+                <div className="mt-4 w-20 h-20 mx-auto rounded-xl overflow-hidden border-2 border-slate-100 shadow-inner">
+                  <img src={selfieImage!} alt="Voter Receipt" className="w-full h-full object-cover" />
+                </div>
+                <p className="text-slate-400 text-[9px] font-bold uppercase tracking-widest mt-3">Ref: {receipt.ref}</p>
               </div>
 
-              {/* SCREENSHOT NOTICE */}
               <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center gap-3">
                 <div className="bg-blue-600 p-2 rounded-lg text-white">
-                  <Camera size={16} className="animate-pulse" />
+                  <Camera size={14} className="animate-pulse" />
                 </div>
-                <p className="text-[10px] font-black text-blue-800 uppercase leading-tight tracking-tight">
-                  Action Required: Please screenshot this receipt for your records before closing.
+                <p className="text-[9px] font-black text-blue-800 uppercase leading-tight tracking-tight">
+                  Action Required: Please screenshot this receipt for your records.
                 </p>
               </div>
 
-              <div className="bg-slate-50 rounded-3xl p-6 mb-6 border border-slate-100 font-mono text-[9px] max-h-64 overflow-y-auto custom-scrollbar">
+              <div className="bg-slate-50 rounded-3xl p-6 mb-6 border border-slate-100 font-mono text-[9px] max-h-56 overflow-y-auto custom-scrollbar">
                 <div className="space-y-3">
                   {myBallotPositions.map(pos => (
                     <div key={pos} className="grid grid-cols-2 gap-2 border-b border-slate-100 pb-2 last:border-0">
@@ -270,12 +396,11 @@ const VotingBooth = () => {
         )}
       </AnimatePresence>
 
-      {/* CONFIRMATION MODAL */}
       <AnimatePresence>
         {showConfirmModal && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" />
-            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-sm bg-white text-slate-900 rounded-[40px] p-10 shadow-2xl">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="relative w-full max-w-sm bg-white text-slate-900 rounded-[40px] p-10 shadow-2xl">
               <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><AlertTriangle size={28} /></div>
               <h3 className="text-xl font-black uppercase text-center mb-4">Confirm Ballot?</h3>
               {missingVotes.length > 0 && (

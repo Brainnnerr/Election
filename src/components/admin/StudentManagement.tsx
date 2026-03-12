@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Trash2, Search, UserCheck, UserX, Users, 
-  AlertCircle, CheckCircle2, RefreshCcw, 
+  AlertCircle, CheckCircle2, RefreshCcw,  Camera, X
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -18,6 +18,7 @@ const SUB_TABS = [
 
 const StudentManagement = () => {
   const [students, setStudents] = useState<any[]>([]);
+  const [voterSelfies, setVoterSelfies] = useState<Record<string, string>>({}); // Maps voter_id to selfie_url
   const [votedIds, setVotedIds] = useState<Set<string>>(new Set());
   const [activeSubTab, setActiveSubTab] = useState('1A');
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,6 +26,7 @@ const StudentManagement = () => {
 
   // Custom UI States
   const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null);
+  const [viewSelfie, setViewSelfie] = useState<{url: string, name: string} | null>(null);
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
 
   useEffect(() => {
@@ -38,25 +40,38 @@ const StudentManagement = () => {
 
   const fetchData = async () => {
     setLoading(true);
+    
+    // 1. Fetch Student Profiles
     const { data: profileData } = await supabase
       .from('profiles')
       .select('*')
       .eq('role', 'student')
       .order('full_name', { ascending: true });
 
-    const { data: voteData } = await supabase.from('votes').select('voter_id');
-    const votedSet = new Set(voteData?.map(v => v.voter_id));
+    // 2. Fetch Votes to get Selfie URLs
+    const { data: voteData } = await supabase
+      .from('votes')
+      .select('voter_id, voter_selfie');
+
+    const votedSet = new Set<string>();
+    const selfieMap: Record<string, string> = {};
+
+    voteData?.forEach(v => {
+      votedSet.add(v.voter_id);
+      if (v.voter_selfie) {
+        selfieMap[v.voter_id] = v.voter_selfie;
+      }
+    });
 
     setStudents(profileData || []);
     setVotedIds(votedSet);
+    setVoterSelfies(selfieMap);
     setLoading(false);
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    
     const { error } = await supabase.from('profiles').delete().eq('id', deleteTarget.id);
-    
     if (error) {
       triggerToast("Failed to remove student record", "error");
     } else {
@@ -73,7 +88,7 @@ const StudentManagement = () => {
       : (s.year_level === currentTabInfo?.year);
     
     const matchesSearch = s.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         s.student_number?.includes(searchQuery);
+                          s.student_number?.includes(searchQuery);
     
     return matchesTab && matchesSearch;
   });
@@ -174,9 +189,21 @@ const StudentManagement = () => {
                     <td className="p-8 font-mono text-xs font-bold text-blue-600">{student.student_number || '---'}</td>
                     <td className="p-8">
                       {votedIds.has(student.id) ? (
-                        <div className="flex items-center gap-2 text-emerald-500 bg-emerald-50 w-fit px-3 py-1.5 rounded-lg border border-emerald-100">
-                          <UserCheck size={14} />
-                          <span className="text-[9px] font-black uppercase tracking-[0.1em]">VOTED</span>
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-2 text-emerald-500 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
+                            <UserCheck size={14} />
+                            <span className="text-[9px] font-black uppercase tracking-[0.1em]">VOTED</span>
+                          </div>
+                          {/* VIEW SELFIE BUTTON */}
+                          {voterSelfies[student.id] && (
+                             <button 
+                              onClick={() => setViewSelfie({ url: voterSelfies[student.id], name: student.full_name })}
+                              className="flex items-center gap-2 text-blue-500 hover:text-blue-700 transition-colors"
+                             >
+                               <Camera size={14} />
+                               <span className="text-[9px] font-black uppercase underline tracking-widest">Verify ID</span>
+                             </button>
+                          )}
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 text-slate-300 px-3 py-1.5">
@@ -189,7 +216,6 @@ const StudentManagement = () => {
                       <button 
                         onClick={() => setDeleteTarget({id: student.id, name: student.full_name})}
                         title={`Purge ${student.full_name}`}
-                        aria-label={`Delete student ${student.full_name}`}
                         className="p-3 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                       >
                         <Trash2 size={18}/>
@@ -209,6 +235,60 @@ const StudentManagement = () => {
           </table>
         )}
       </div>
+
+      {/* --- SELFIE VIEW MODAL (COMPACT VERSION) --- */}
+<AnimatePresence>
+  {viewSelfie && (
+    <div className="fixed inset-0 z-[180] flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+        onClick={() => setViewSelfie(null)} 
+        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" 
+      />
+      
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0, y: 10 }} 
+        animate={{ scale: 1, opacity: 1, y: 0 }} 
+        exit={{ scale: 0.9, opacity: 0, y: 10 }}
+        className="relative w-full max-w-[320px] bg-white rounded-[32px] overflow-hidden shadow-2xl border border-slate-200"
+      >
+        {/* Compact Close Button */}
+        <button 
+  onClick={() => setViewSelfie(null)} 
+  aria-label="Close selfie preview"
+  title="Close preview"
+  className="absolute top-4 right-4 z-10 p-2 bg-black/20 backdrop-blur-md text-white rounded-full hover:bg-black/50 transition-colors"
+>
+  <X size={16} />
+</button>
+
+        {/* Scaled Image Container */}
+        <div className="aspect-square w-full bg-slate-100">
+          <img 
+            src={viewSelfie.url} 
+            alt="Identity Check" 
+            className="w-full h-full object-cover" 
+          />
+        </div>
+
+        {/* Compact Info Footer */}
+        <div className="p-5 bg-white">
+          <div className="flex flex-col gap-3">
+            <div>
+              <p className="text-[8px] font-black text-blue-600 uppercase tracking-[0.2em] mb-0.5">Voter Identity</p>
+              <h4 className="text-sm font-black text-slate-900 uppercase truncate">{viewSelfie.name}</h4>
+            </div>
+            
+            <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50/50 px-3 py-1.5 rounded-xl border border-emerald-100 w-fit">
+              <CheckCircle2 size={12} />
+              <span className="text-[9px] font-black uppercase tracking-widest">Verified Session</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )}
+</AnimatePresence>
 
       {/* --- DELETE CONFIRMATION --- */}
       <AnimatePresence>
