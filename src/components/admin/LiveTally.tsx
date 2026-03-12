@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
 import { Trophy, Clock, RefreshCcw, Percent, Users } from 'lucide-react';
 
-const POSITIONS = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Auditor', 'PIO', 'Protocol Officer'];
+const POSITIONS = ['President', 'Vice President', 'Secretary', 'Finance Executive', 'Auditor', 'PRO', '2nd Year Representative', '3rd Year Representative', '4th Year Representative'];
 const VOTE_MILESTONE = 600;
 
 const LiveTally = () => {

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
-const POSITIONS = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Auditor', 'PIO', 'Protocol Officer'];
+const POSITIONS = ['President', 'Vice President', 'Secretary', 'Finance Executive', 'Auditor', 'PRO', '2nd Year Representative', '3rd Year Representative', '4th Year Representative'];
 
 const CandidateManagement = () => {
   const [candidates, setCandidates] = useState<any[]>([]);
