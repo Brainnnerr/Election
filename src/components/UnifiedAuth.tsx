@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // Added useEffect
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mail, Lock, User, GraduationCap, Layers, ArrowRight, Eye, EyeOff, CheckCircle2, AlertTriangle, Hash } from 'lucide-react';
+import { Mail, Lock, User, GraduationCap, Layers, ArrowRight, Eye, EyeOff, CheckCircle2, AlertTriangle, Hash, UserX } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface UnifiedAuthProps {
@@ -13,9 +13,12 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showToast, setShowToast] = useState(false); // FIXED: Now used in JSX
+  const [showToast, setShowToast] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  
+  // Registration Control State
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
 
   const [formData, setFormData] = useState({
     email: '',
@@ -25,6 +28,21 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
     section: '',
     studentNumber: ''
   });
+
+  // Check registration status on mount
+  useEffect(() => {
+    const checkRegStatus = async () => {
+      const { data } = await supabase
+        .from('system_settings')
+        .select('is_registration_open')
+        .eq('id', 'global_config')
+        .single();
+      
+      if (data) setRegistrationEnabled(data.is_registration_open);
+    };
+
+    if (isOpen) checkRegStatus();
+  }, [isOpen]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -53,6 +71,11 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
         if (error) throw error;
         onClose();
       } else {
+        // Prevent submission if registration is disabled via client side as well
+        if (!registrationEnabled) {
+          throw new Error("Registration is currently disabled by the Admin.");
+        }
+
         if (!formData.yearLevel || !formData.section || !formData.studentNumber) {
           setErrorMsg("Please complete all academic information.");
           setLoading(false);
@@ -74,7 +97,6 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
 
         if (error) throw error;
         
-        // Trigger the Toast upon successful registration
         setShowToast(true);
         setTimeout(() => {
           setShowToast(false);
@@ -102,13 +124,10 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
 
-          {/* Success Toast for Registration */}
           <AnimatePresence>
             {showToast && (
               <motion.div 
-                initial={{ opacity: 0, y: -20 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                exit={{ opacity: 0, y: -20 }}
+                initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
                 className="fixed top-10 z-[60] bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400"
               >
                 <CheckCircle2 size={20} />
@@ -155,97 +174,125 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
                 )}
               </AnimatePresence>
 
-              <form className="space-y-4" onSubmit={handleAuth}>
-                {!isLogin && !isForgotPassword && (
-                  <>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Full Name</label>
-                      <div className="relative">
-                        <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                        <input name="fullName" required type="text" onChange={handleChange} placeholder="Juan Dela Cruz" className="modern-input pl-11" />
-                      </div>
+              {/* AUTH CONTENT */}
+              <div className="min-h-[300px]">
+                {/* Check if we are in Register mode AND registration is closed */}
+                {!isLogin && !isForgotPassword && !registrationEnabled ? (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="py-10 px-6 bg-slate-900/50 rounded-[32px] border border-white/5 text-center flex flex-col items-center justify-center"
+                  >
+                    <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-6 border border-red-500/20">
+                      <UserX size={32} />
                     </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Student ID Number</label>
-                      <div className="relative">
-                        <Hash size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                        <input name="studentNumber" required type="text" onChange={handleChange} placeholder="25-12345" className="modern-input pl-11" />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1" htmlFor="yearLevel">Year</label>
-                        <div className="relative">
-                          <GraduationCap size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                          <select id="yearLevel" name="yearLevel" required onChange={handleChange} className="modern-input pl-11 appearance-none text-slate-400 focus:text-white">
-                            <option value="">Year</option>
-                            <option value="1">1st Year</option>
-                            <option value="2">2nd Year</option>
-                            <option value="3">3rd Year</option>
-                            <option value="4">4th Year</option>
-                          </select>
+                    <h3 className="text-white font-black uppercase tracking-tighter text-lg mb-2">Registration Closed</h3>
+                    <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest leading-relaxed">
+                      The administrator has temporarily disabled new account registration. <br /> 
+                      Please contact your student representative for assistance.
+                    </p>
+                    <button 
+                      type="button" 
+                      onClick={() => toggleMode('login')}
+                      className="mt-8 text-[9px] font-black text-blue-500 uppercase tracking-[0.2em] border-b border-blue-500/30 pb-1 hover:text-blue-400 transition-colors"
+                    >
+                      Return to Login
+                    </button>
+                  </motion.div>
+                ) : (
+                  <form className="space-y-4" onSubmit={handleAuth}>
+                    {!isLogin && !isForgotPassword && (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Full Name</label>
+                          <div className="relative">
+                            <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input name="fullName" required type="text" onChange={handleChange} placeholder="Juan Dela Cruz" className="modern-input pl-11" />
+                          </div>
                         </div>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1" htmlFor="section">Section</label>
-                        <div className="relative">
-                          <Layers size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                          <select id="section" name="section" required onChange={handleChange} className="modern-input pl-11 appearance-none text-slate-400 focus:text-white">
-                            <option value="">Section</option>
-                            <option value="A">Section A</option>
-                            <option value="B">Section B</option>
-                          </select>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Student ID Number</label>
+                          <div className="relative">
+                            <Hash size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input name="studentNumber" required type="text" onChange={handleChange} placeholder="25-12345" className="modern-input pl-11" />
+                          </div>
                         </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase ml-1" htmlFor="yearLevel">Year</label>
+                            <div className="relative">
+                              <GraduationCap size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                              <select id="yearLevel" name="yearLevel" required onChange={handleChange} className="modern-input pl-11 appearance-none text-slate-400 focus:text-white">
+                                <option value="">Year</option>
+                                <option value="1">1st Year</option>
+                                <option value="2">2nd Year</option>
+                                <option value="3">3rd Year</option>
+                                <option value="4">4th Year</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase ml-1" htmlFor="section">Section</label>
+                            <div className="relative">
+                              <Layers size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                              <select id="section" name="section" required onChange={handleChange} className="modern-input pl-11 appearance-none text-slate-400 focus:text-white">
+                                <option value="">Section</option>
+                                <option value="A">Section A</option>
+                                <option value="B">Section B</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Email Address</label>
+                      <div className="relative">
+                        <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input name="email" required type="email" onChange={handleChange} placeholder="example@gmail.com" className="modern-input pl-11" />
                       </div>
                     </div>
-                  </>
-                )}
 
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Email Address</label>
-                  <div className="relative">
-                    <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input name="email" required type="email" onChange={handleChange} placeholder="example@gmail.com" className="modern-input pl-11" />
-                  </div>
-                </div>
-
-                {!isForgotPassword && (
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Password</label>
-                    <div className="relative">
-                      <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                      <input name="password" required type={showPassword ? "text" : "password"} onChange={handleChange} placeholder="••••••••" className="modern-input pl-11 pr-12" />
-                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-blue-400 transition-colors">
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                    {isLogin && (
-                      <div className="flex justify-end mt-1 px-1">
-                        <button 
-                          type="button" 
-                          onClick={() => toggleMode('forgot')} 
-                          className="text-[9px] font-black text-blue-500 uppercase tracking-widest hover:text-blue-400 hover:underline transition-colors"
-                        >
-                          Forgot Password?
-                        </button>
+                    {!isForgotPassword && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Password</label>
+                        <div className="relative">
+                          <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                          <input name="password" required type={showPassword ? "text" : "password"} onChange={handleChange} placeholder="••••••••" className="modern-input pl-11 pr-12" />
+                          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-blue-400 transition-colors">
+                            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        </div>
+                        {isLogin && (
+                          <div className="flex justify-end mt-1 px-1">
+                            <button 
+                              type="button" 
+                              onClick={() => toggleMode('forgot')} 
+                              className="text-[9px] font-black text-blue-500 uppercase tracking-widest hover:text-blue-400 hover:underline transition-colors"
+                            >
+                              Forgot Password?
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
 
-                <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] shadow-lg transition-all flex items-center justify-center gap-2 group mt-4 active:scale-95">
-                  {loading ? 'Processing...' : isForgotPassword ? 'Send Recovery Link' : isLogin ? 'Login' : 'Create Account'}
-                  {!loading && <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />}
-                </button>
+                    <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] shadow-lg transition-all flex items-center justify-center gap-2 group mt-4 active:scale-95">
+                      {loading ? 'Processing...' : isForgotPassword ? 'Send Recovery Link' : isLogin ? 'Login' : 'Create Account'}
+                      {!loading && <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />}
+                    </button>
 
-                {isForgotPassword && (
-                  <button type="button" onClick={() => toggleMode('login')} className="w-full text-center text-[10px] font-bold text-slate-500 uppercase hover:text-white transition-colors mt-2">
-                    Back to Login
-                  </button>
+                    {isForgotPassword && (
+                      <button type="button" onClick={() => toggleMode('login')} className="w-full text-center text-[10px] font-bold text-slate-500 uppercase hover:text-white transition-colors mt-2">
+                        Back to Login
+                      </button>
+                    )}
+                  </form>
                 )}
-              </form>
+              </div>
             </div>
           </motion.div>
         </div>
