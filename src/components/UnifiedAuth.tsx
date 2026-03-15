@@ -16,6 +16,7 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
   const [showToast, setShowToast] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [canResend, setCanResend] = useState(false);
   
   // Registration Control State
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
@@ -49,66 +50,114 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
     if (errorMsg) setErrorMsg(null);
   };
 
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
 
-    try {
-      if (isForgotPassword) {
-        const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
-          redirectTo: `${window.location.origin}/reset-password`,
-        });
-        if (error) throw error;
-        setSuccessMsg("Recovery link sent to your email!");
-        setTimeout(() => { setIsForgotPassword(false); setIsLogin(true); setSuccessMsg(null); }, 3000);
-      } else if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
-          password: formData.password,
-        });
-        if (error) throw error;
-        onClose();
-      } else {
-        // Prevent submission if registration is disabled via client side as well
-        if (!registrationEnabled) {
-          throw new Error("Registration is currently disabled by the Admin.");
-        }
+  const handleResend = async () => {
+  setLoading(true);
+  setErrorMsg(null); // Clear previous errors
+  
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: formData.email,
+  });
 
-        if (!formData.yearLevel || !formData.section || !formData.studentNumber) {
-          setErrorMsg("Please complete all academic information.");
-          setLoading(false);
-          return;
-        }
-
-        const { error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
-              full_name: formData.fullName,
-              year_level: formData.yearLevel,
-              section: formData.section,
-              student_number: formData.studentNumber,
-            }
-          }
-        });
-
-        if (error) throw error;
-        
-        setShowToast(true);
-        setTimeout(() => {
-          setShowToast(false);
-          setIsLogin(true);
-        }, 5000);
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || "An unexpected error occurred.");
-    } finally {
-      setLoading(false);
+  if (error) {
+    // If they click too fast, show a friendly rate-limit message
+    if (error.message.includes("rate limit")) {
+      setErrorMsg("Please wait a few minutes before requesting another link.");
+    } else {
+      setErrorMsg(error.message);
     }
-  };
+  } else {
+    setSuccessMsg("Verification link sent! Please check your inbox and Spam folder.");
+    setCanResend(false); // Hide the button since it worked
+  }
+  
+  setLoading(false);
+};
+
+
+ const handleAuth = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+  setErrorMsg(null);
+  setSuccessMsg(null);
+  setCanResend(false); // Reset resend state on every new attempt
+
+  try {
+    if (isForgotPassword) {
+      const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setSuccessMsg("Recovery link sent to your email!");
+      setTimeout(() => { setIsForgotPassword(false); setIsLogin(true); setSuccessMsg(null); }, 3000);
+    } else if (isLogin) {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password,
+      });
+      if (error) throw error;
+      onClose();
+    } else {
+      // --- REGISTRATION LOGIC ---
+      if (!registrationEnabled) {
+        throw new Error("Registration is currently disabled by the Admin.");
+      }
+
+      if (!formData.yearLevel || !formData.section || !formData.studentNumber) {
+        setErrorMsg("Please complete all academic information.");
+        setLoading(false);
+        return;
+      }
+
+      // 1. DUPLICATE STUDENT ID CHECK
+      const { data: existingStudent, error: checkError } = await supabase
+        .from('profiles')
+        .select('student_number')
+        .eq('student_number', formData.studentNumber.trim())
+        .maybeSingle();
+
+      if (checkError) throw checkError;
+      if (existingStudent) {
+        throw new Error("This Student Number is already registered to another account.");
+      }
+
+      // 2. TRIGGER AUTH SIGNUP
+      const { error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            full_name: formData.fullName,
+            year_level: formData.yearLevel,
+            section: formData.section,
+            student_number: formData.studentNumber.trim(),
+          }
+        }
+      });
+
+      if (error) throw error;
+      
+      setShowToast(true);
+      setTimeout(() => {
+        setShowToast(false);
+        setIsLogin(true);
+      }, 5000);
+    }
+  } catch (err: any) {
+    const msg = err.message || "An unexpected error occurred.";
+    setErrorMsg(msg);
+    
+    // Check if the error indicates the email is already in the system
+    // This triggers the 'Resend' button visibility
+    if (msg.toLowerCase().includes("already registered") || msg.toLowerCase().includes("exists")) {
+      setCanResend(true);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const toggleMode = (mode: 'login' | 'register' | 'forgot') => {
     setErrorMsg(null);
@@ -290,7 +339,17 @@ const UnifiedAuth = ({ isOpen, onClose }: UnifiedAuthProps) => {
                         Back to Login
                       </button>
                     )}
-                  </form>
+
+                    {canResend && (
+  <button 
+    type="button" // Always specify type="button" to prevent form submission
+    onClick={handleResend}
+    className="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-xl font-black text-[10px] uppercase tracking-widest border border-blue-500/20 transition-all flex items-center justify-center gap-2"
+  >
+    <Mail size={14} />
+    Resend Verification Email
+  </button>
+)}                  </form>
                 )}
               </div>
             </div>
