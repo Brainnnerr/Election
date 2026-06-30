@@ -61,7 +61,7 @@ const VotingBooth = () => {
       let repPosition = "";
 
       if (userYear === '1') {
-        repPosition = '2nd Year Representative';
+        repPosition = '1st Year Representative';
       } else if (userYear === '2') {
         repPosition = '3rd Year Representative';
       } else if (userYear === '3') {
